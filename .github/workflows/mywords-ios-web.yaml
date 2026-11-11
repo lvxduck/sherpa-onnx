@@ -103,6 +103,8 @@ jobs:
 
   publish:
     needs: [ios, web]
+    # Publish whatever built: macOS runners are sometimes not available.
+    if: always() && (needs.ios.result == 'success' || needs.web.result == 'success')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -125,9 +127,15 @@ jobs:
           else
             git checkout -q --orphan mywords-dist
           fi
-          git rm -rqf --ignore-unmatch sherpa_onnx_ios sherpa_onnx_web
-          cp -R /tmp/artifacts/sherpa_onnx_ios/sherpa_onnx_ios .
-          cp -R /tmp/artifacts/sherpa_onnx_web/sherpa_onnx_web .
+          # Replace only the packages built in this run; keep the others.
+          for pkg in sherpa_onnx_ios sherpa_onnx_web; do
+            if [ -d /tmp/artifacts/$pkg/$pkg ]; then
+              git rm -rqf --ignore-unmatch $pkg
+              rm -rf $pkg
+              cp -R /tmp/artifacts/$pkg/$pkg .
+              echo "updated $pkg"
+            fi
+          done
           cat > README.md <<README
           Built by .github/workflows/mywords-ios-web.yaml from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}.
 
