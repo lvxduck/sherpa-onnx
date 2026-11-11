@@ -1,0 +1,146 @@
+# Builds sherpa_onnx_ios and sherpa_onnx_web with the onnxruntime C API
+# exported (OrtGetApiBase, and wasmTable on the web), for the MyWords
+# pronunciation scorer, which calls onnxruntime directly through the copy
+# inside sherpa-onnx. The two packages are committed to the `mywords-dist`
+# branch so an app can use them as git dependency_overrides.
+name: mywords-ios-web
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'mywords/**'
+
+concurrency:
+  group: mywords-ios-web-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build SherpaOnnxC.xcframework (onnxruntime linked statically)
+        shell: bash
+        run: ./build-ios-shared-sherpa-with-static-onnxruntime.sh
+
+      - name: Check exported symbols
+        shell: bash
+        run: |
+          set -e
+          fw=build-ios-shared-sherpa-with-static-onnxruntime/SherpaOnnxC.xcframework
+          for bin in $fw/*/SherpaOnnxC.framework/SherpaOnnxC; do
+            echo "== $bin"
+            nm -gU "$bin" | grep -E ' _OrtGetApiBase$'
+            nm -gU "$bin" | grep -cE ' _SherpaOnnx'
+          done
+
+      - name: Assemble package
+        shell: bash
+        run: |
+          set -e
+          dst=/tmp/dist/sherpa_onnx_ios
+          mkdir -p /tmp/dist
+          cp -R flutter/sherpa_onnx_ios $dst
+          rm -fv $dst/ios/.gitignore
+          cp -R build-ios-shared-sherpa-with-static-onnxruntime/SherpaOnnxC.xcframework \
+            $dst/ios/sherpa_onnx_ios/
+          cp LICENSE $dst/
+          du -sh $dst
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherpa_onnx_ios
+          path: /tmp/dist
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.23
+
+      - name: Build WASM module
+        shell: bash
+        run: ./build-wasm-simd-web.sh
+
+      - name: Check exports
+        shell: bash
+        run: |
+          set -e
+          js=build-wasm-simd-web/install/bin/wasm/web/sherpa-onnx-wasm-web.js
+          grep -q '_OrtGetApiBase' $js
+          grep -q 'wasmTable' $js
+          echo "OrtGetApiBase and wasmTable exported"
+
+      - name: Assemble package
+        shell: bash
+        run: |
+          set -e
+          dst=/tmp/dist/sherpa_onnx_web
+          mkdir -p /tmp/dist
+          cp -R flutter/sherpa_onnx_web $dst
+          rm -f $dst/.gitignore
+          mkdir -p $dst/assets
+          cp build-wasm-simd-web/install/bin/wasm/web/sherpa-onnx-wasm-web.{js,wasm} $dst/assets/
+          cp wasm/tts/sherpa-onnx-tts.js wasm/asr/sherpa-onnx-asr.js \
+             wasm/vad/sherpa-onnx-vad.js wasm/kws/sherpa-onnx-kws.js \
+             wasm/nodejs/sherpa-onnx-punctuation.js \
+             wasm/speaker-diarization/sherpa-onnx-speaker-diarization.js \
+             wasm/speech-enhancement/sherpa-onnx-speech-enhancement.js \
+             $dst/assets/
+          cp LICENSE $dst/
+          du -sh $dst
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherpa_onnx_web
+          path: /tmp/dist
+
+  publish:
+    needs: [ios, web]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/artifacts
+
+      - name: Commit packages to mywords-dist
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          mkdir /tmp/repo && cd /tmp/repo
+          git init -q
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q --depth 1 origin mywords-dist; then
+            git checkout -q -b mywords-dist FETCH_HEAD
+          else
+            git checkout -q --orphan mywords-dist
+          fi
+          git rm -rqf --ignore-unmatch sherpa_onnx_ios sherpa_onnx_web
+          cp -R /tmp/artifacts/sherpa_onnx_ios/sherpa_onnx_ios .
+          cp -R /tmp/artifacts/sherpa_onnx_web/sherpa_onnx_web .
+          cat > README.md <<README
+          Built by .github/workflows/mywords-ios-web.yaml from ${GITHUB_REF_NAME} @ ${GITHUB_SHA}.
+
+          sherpa_onnx_ios and sherpa_onnx_web with the onnxruntime C API exported
+          (OrtGetApiBase; wasmTable on the web). Use as dependency_overrides:
+
+              dependency_overrides:
+                sherpa_onnx_ios:
+                  git: {url: https://github.com/${GITHUB_REPOSITORY}.git, ref: mywords-dist, path: sherpa_onnx_ios}
+                sherpa_onnx_web:
+                  git: {url: https://github.com/${GITHUB_REPOSITORY}.git, ref: mywords-dist, path: sherpa_onnx_web}
+          README
+          git add -A
+          git -c user.name=github-actions -c user.email=github-actions@users.noreply.github.com \
+            commit -qm "Build from ${GITHUB_REF_NAME} ${GITHUB_SHA}"
+          git push -q origin mywords-dist

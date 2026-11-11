@@ -122,6 +122,9 @@ set(exported_functions
   SherpaOnnxGetGitSha1
   SherpaOnnxGetVersionStr
   SherpaOnnxGetOnnxruntimeVersionStr
+  # onnxruntime C API entry point, so that callers can run their own models
+  # with the onnxruntime that is already linked into this module
+  OrtGetApiBase
 )
 
 set(mangled_exported_functions)
@@ -135,5 +138,5 @@ set(MY_FLAGS " -sWASM_BIGINT=1 -s FORCE_FILESYSTEM=1 -s INITIAL_MEMORY=512MB -s 
 string(APPEND MY_FLAGS " -sSTACK_SIZE=10485760 ") # 10MB
 string(APPEND MY_FLAGS " -sALLOW_TABLE_GROWTH ")
 string(APPEND MY_FLAGS " -sEXPORTED_FUNCTIONS=[_CopyHeap,_malloc,_free,${all_exported_functions}] ")
-string(APPEND MY_FLAGS " -sEXPORTED_RUNTIME_METHODS=['ccall','stringToUTF8','setValue','getValue','lengthBytesUTF8','UTF8ToString','HEAPU8','HEAP16','HEAP32','HEAPU32','HEAPF32','HEAPF64','addFunction','removeFunction','FS'] ")
+string(APPEND MY_FLAGS " -sEXPORTED_RUNTIME_METHODS=['ccall','stringToUTF8','setValue','getValue','lengthBytesUTF8','UTF8ToString','HEAPU8','HEAP16','HEAP32','HEAPU32','HEAPF32','HEAPF64','addFunction','removeFunction','wasmTable','FS'] ")
 string(APPEND MY_FLAGS " -sMODULARIZE=1 ")
